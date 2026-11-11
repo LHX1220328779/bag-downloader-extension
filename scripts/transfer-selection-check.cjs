@@ -126,6 +126,49 @@ async function slowLoadRace(worker, page) {
   assert.equal(await page.locator('.transfer-spinner').count(), 0);
   assert.equal(await page.locator('.transfer-control-note').count(), 0, '服务器确认后不显示占位状态文字');
 }
+async function sharedRecordConfirmation(worker, page) {
+  const shared = { record_no: 13, truck_no: 'WH-Truck05', mine_code: 'WH', break_source: 'mdc', task_type: 'Perception',
+    filename: 'Perception_2026-11-03-09-00-30_shared.bag', create_time: '2026-11-03 09:00:30',
+    remarks: '[BagFlowTask:other-task]', status: 'waiting' };
+  records.push(shared);
+  await page.evaluate(async shared => {
+    const { tasks } = await chrome.storage.local.get('tasks'), t = tasks[0];
+    t.transfers.push({ key: BagCore.fileKey(shared), filename: shared.filename, create_time: shared.create_time, recordNo: shared.record_no,
+      state: 'submitted', accepted: true, submissionLocked: true, attempts: 1, submittedAt: 0, batchId: null });
+    t.transferControl = { ...t.transferControl, phase: 'waiting', awaitingRecords: 1, nextCheckAt: Date.now() + 60000 };
+    await chrome.storage.local.set({ tasks }); await load();
+  }, shared);
+  assert.equal(await page.locator('[data-act="transfer"]').getAttribute('aria-busy'), 'true');
+  await settle(worker, page, true);
+  await page.waitForFunction(() => document.querySelector('[data-act="transfer"]').getAttribute('aria-busy') === 'false');
+  assert.equal(await page.locator('.transfer-spinner').count(), 0);
+  assert.equal(await page.locator('.transfer-control-note').count(), 0);
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('[data-act="transfer"]')?.getAttribute('aria-busy') === 'false');
+  assert.equal(await page.locator('[data-act="transfer"]').getAttribute('aria-pressed'), 'true');
+  await page.locator('[data-act="transfer"]').click(); await settle(worker, page, false);
+  await page.locator('[data-act="transfer"]').click(); await settle(worker, page, true);
+  assert.equal(shared.status, 'waiting');
+  assert(!requests.some(r => /\/api\/break\/(pause|cancelpause)\/13$/.test(r.pathname)), '共享回传只能复用结果，不能取得控制权');
+  // 真正在途的本任务提交仍显示加载，服务器返回对应原记录后才结束确认。
+  const inflight = { filename: 'Perception_2026-11-03-09-01-30_inflight.bag', create_time: '2026-11-03 09:01:30', record_no: 14,
+    truck_no: 'WH-Truck05', mine_code: 'WH', break_source: 'mdc', remarks: `[BagFlowTask:${id}]`, status: 'cancelpause' };
+  await page.evaluate(async inflight => {
+    const { tasks } = await chrome.storage.local.get('tasks'), t = tasks[0];
+    t.transfers.push({ key: BagCore.fileKey(inflight), filename: inflight.filename, create_time: inflight.create_time, state: 'submitting',
+      accepted: false, submissionLocked: true, attempts: 1, submittedAt: Date.now(), batchId: 'inflight-local-batch' });
+    t.transferControl.nextCheckAt = 0;
+    await chrome.storage.local.set({ tasks });
+  }, inflight);
+  await worker.evaluate(id => reconcileTransferControl(id, true), id);
+  await page.evaluate(() => load());
+  assert.equal((await state(page)).tasks[0].transferControl.awaitingRecords, 1);
+  assert.equal(await page.locator('[data-act="transfer"]').getAttribute('aria-busy'), 'true');
+  records.push(inflight); await settle(worker, page, true);
+  await page.waitForFunction(() => document.querySelector('[data-act="transfer"]').getAttribute('aria-busy') === 'false');
+  assert.equal(await page.locator('.transfer-spinner').count(), 0);
+  await page.screenshot({ path: path.join(output, 'shared-records-confirmed.png'), fullPage: true });
+}
 async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let { worker, page } = await launch(); await seed(page); await slowLoadRace(worker, page);
@@ -198,11 +241,12 @@ async function main() {
     await page.emulateMedia({ colorScheme: theme });
     await page.screenshot({ path: path.join(output, `offline-restored-${theme}.png`), fullPage: true });
   }
+  await sharedRecordConfirmation(worker, page);
   const final = await state(page); assert.equal(final.tasks[0].runToken, 'preserved-run'); assert.equal(final.tasks[0].dirPath, 'D:\\数据\\车辆05\\rtfbag');
   assert.equal(final.tasks[0].vehicleOnline, false); assert.equal(final.tasks[0].transferEnabled, true);
   assert(!requests.some(r => /\/api\/break\/remove|\/api\/bag\/mdcadd/.test(r.pathname)), '暂停恢复不能删除或重建原回传');
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, requests, records, final }, null, 2));
-  console.log('选择与离线恢复验收通过：旧任务备注缺失、原记录恢复并显示等待回传、旧暂停提示清除；立即勾选/取消、淡色圆弧加载、六种布局、减少动态效果、异步加载竞态、心跳、重开、失败保持及后台版本不一致。\n' + output);
+  console.log('选择与离线恢复验收通过：共享回传不误报在途提交，确认后结束加载，真实在途仍待确认；旧任务备注缺失、原记录恢复及暂停提示清除；即时勾选、淡色圆弧、六种布局、竞态、心跳、重开、失败及版本不一致。\n' + output);
 }
 main().catch(e => { console.error(e); console.error(output); process.exitCode = 1; }).finally(async () => {
   if (context) await context.close(); server.closeAllConnections(); server.close();

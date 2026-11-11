@@ -101,6 +101,13 @@
     // 没有单包编号的旧批次也要核对记录数量，不能用一条同批记录代表所有包。
     return peers.length > 0 && ids.size >= peers.length;
   }
+  function hasSharedItemRecord(t, i, records) {
+    const id = recordId(i.recordNo);
+    if (!id || i.accepted !== true || i.batchId || i.submittedAt || ['submitting', 'uncertain'].includes(i.state)) return false;
+    // 容量拒绝会保留 attempts；后来复用其他任务的结果时，没有本任务在途提交。
+    // 本次查询必须确认原编号、完整包名和作用域；共享引用不取得暂停/恢复控制权。
+    return records.some(r => recordId(r.record_no) === id && inScope(t, r) && matchesFile(i, r) && !owns(t, r));
+  }
   function message(control) {
     const action = control.enabled ? '恢复' : '暂停';
     if (control.error) return `回传${action}未完成，自动重试：${control.error}`;
@@ -137,7 +144,7 @@
       (r.commandRevision !== revision || r.commandEnabled !== enabled || now >= (r.retryAt || 0))).map(r => visible.get(r.recordNo));
     const owned = [...visible.values()];
     const awaitingRecords = (t.transfers || []).filter(i => !i.coverageExcluded && i.state !== 'done' &&
-      i.submissionLocked && (i.attempts || i.submittedAt) && !hasItemRecord(t, i, owned)).length;
+      i.submissionLocked && (i.attempts || i.submittedAt) && !hasItemRecord(t, i, owned) && !hasSharedItemRecord(t, i, rows)).length;
     const failed = remaining.find(r => r.commandRevision === revision && r.error);
     const error = invalid ? `${invalid} 条本任务回传的记录编号无效` : unknown ? `${unknown} 条回传状态未知` :
       missing ? `${missing} 条已确认属于本任务的记录暂未返回，持续核查` : failed?.error || '';

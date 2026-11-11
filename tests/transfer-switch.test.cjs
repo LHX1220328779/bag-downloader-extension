@@ -15,6 +15,22 @@ const catalog = n => Array.from({ length: n }, (_, i) => row(
   `Perception_2026-11-03-09-${String(i).padStart(2, '0')}-00_${i}.bag`, `09:${String(i).padStart(2, '0')}:00`,
 ));
 
+function sharedRecordFixture() {
+  const t = C.normalizeTask({ id: 'shared-reference-task', kind: 'transfer', status: 'waiting_vehicle', createdAt: 10,
+    filters: { truck_no: 'WH-Truck05', mine_code: 'WH', bag_type: 'Perception' }, transferControlRevision: 2,
+    transfers: [
+      { ...a, recordNo: 91, state: 'submitted', accepted: true, submissionLocked: true, attempts: 1, batchId: null, submittedAt: 0 },
+      { ...b, recordNo: 2, state: 'submitted', accepted: true, submissionLocked: true, attempts: 1, batchId: 'own-batch', submittedAt: 20 },
+    ] });
+  const records = [
+    { record_no: 91, truck_no: 'WH-Truck05', mine_code: 'WH', break_source: 'mdc', task_type: 'Perception',
+      remarks: '[BagFlowTask:other-task]', msg: `待回传:['${a.filename}']`, status: 'waiting' },
+    { record_no: 2, truck_no: 'WH-Truck05', mine_code: 'WH', break_source: 'mdc', filename: b.filename,
+      remarks: '[BagFlowTask:shared-reference-task]', status: 'cancelpause' },
+  ];
+  return { t, records };
+}
+
 test('新旧回传任务默认开启，明确关闭会保留；仅下载不可开启回传', async () => {
   const old = C.normalizeTask({ kind: 'transfer', transfers: [{ ...a, batchId: 'old-batch' }] });
   assert.equal(old.transferEnabled, true); assert.equal(old.transferControlRevision, 0);
@@ -112,6 +128,69 @@ test('同批其他记录不能掩盖已绑定原记录的缺失，不得误报�
   assert.equal(T.synchronize(t, rows, 100).length, 0);
   assert.equal(t.transferControl.awaitingRecords, 1);
   assert.equal(t.transferControl.phase, 'waiting');
+});
+
+test('已确认的共享回传不属于本任务在途提交，旧容量拒绝的 attempts 不能使开关一直等待', () => {
+  const { t, records } = sharedRecordFixture();
+  for (const status of ['waiting', 'pause', 'failed', 'succeed']) {
+    records[0].status = status;
+    assert.equal(T.synchronize(t, records, 100).length, 0);
+    assert.equal(t.transferControl.awaitingRecords, 0, '已确认共享记录不能冒充本任务未返回的提交');
+    assert.equal(t.transferControl.phase, 'settled');
+    assert.equal(t.transferControl.total, 1);
+    assert(!T.owns(t, records[0]));
+    assert(!t.transferControlRecords.some(r => r.recordNo === '91'), '共享引用不能取得控制权');
+  }
+});
+
+test('共享引用必须核对原编号、完整包名和作用域，真实本地提交及缺失原记录仍待确认', () => {
+  for (const patch of [{ accepted: false }, { batchId: 'local-batch' }, { submittedAt: 20 },
+    { state: 'submitting' }, { state: 'uncertain' }]) {
+    const { t, records } = sharedRecordFixture(); Object.assign(t.transfers[0], patch);
+    T.synchronize(t, records, 100);
+    assert.equal(t.transferControl.awaitingRecords, 1, JSON.stringify(patch));
+    assert.equal(t.transferControl.phase, 'waiting');
+  }
+  for (const patch of [{ record_no: 92 }, { truck_no: 'OTHER' }, { mine_code: 'OTHER' }, { task_type: 'Camera' },
+    { break_source: '手工' }, { msg: `${a.filename}.backup` }, { msg: '' }]) {
+    const { t, records } = sharedRecordFixture(); Object.assign(records[0], patch);
+    T.synchronize(t, records, 100);
+    assert.equal(t.transferControl.awaitingRecords, 1, JSON.stringify(patch));
+  }
+  const { t, records } = sharedRecordFixture();
+  t.transferControlRecords = [{ recordNo: '99', status: 'pause', provenance: { kind: 'server-marker', filename: a.filename } }];
+  T.synchronize(t, records, 100);
+  assert.equal(t.transferControl.phase, 'retry');
+  assert.equal(t.transferControl.remaining, 1, '共享结果不能掩盖已确认属于本任务的原记录缺失');
+});
+
+test('容量拒绝后复用其他任务回传，离线暂停恢复只控制本任务原记录并结束确认', async () => {
+  let e, calls = 0;
+  e = await background({ submitBatch: async (t, items) => {
+    if (!calls++) throw Object.assign(new Error('/api/bag/mdcadd：车辆回传任务较多，请稍后再试'), { rejected: true });
+    for (const i of items) await e.context.SiteAPI.submit(t, i);
+  } });
+  const id = await start(e);
+  assert(e.get(id).transfers.every(i => i.attempts === 1 && !i.submissionLocked));
+  e.server.records.push({ ...a, record_no: 91, remarks: '[BagFlowTask:other-task]', status: 'waiting' });
+  e.advance(60000); await e.call('tickTask', id); await flush();
+  await e.call('tickTask', id); await flush();
+  const before = e.get(id), shared = before.transfers.find(i => i.filename === a.filename);
+  assert.equal(shared.recordNo, 91); assert.equal(shared.attempts, 1);
+  assert.equal(shared.accepted, true); assert.equal(shared.batchId, null); assert.equal(shared.submittedAt, 0);
+  assert.equal(e.submissions.length, 1);
+  e.server.online = false; e.advance(60000);
+  await switchTo(e, id, false);
+  assert.equal(e.get(id).transferControl.phase, 'settled');
+  assert.equal(e.server.records[0].status, 'waiting');
+  assert.equal(e.server.records[1].status, 'pause');
+  await switchTo(e, id, true);
+  const after = e.get(id);
+  assert.equal(after.transferControl.phase, 'settled'); assert.equal(after.transferControl.awaitingRecords, 0);
+  assert.equal(after.status, 'waiting_vehicle');
+  assert.equal(e.server.records[0].status, 'waiting'); assert.equal(e.server.records[1].status, 'cancelpause');
+  assert.deepEqual(e.transferCommands, [{ recordNo: '1', enabled: false }, { recordNo: '1', enabled: true }]);
+  assert.equal(e.submissions.length, 1); assert.equal(after.runToken, before.runToken); assert.equal(after.dirPath, before.dirPath);
 });
 
 test('车辆离线时恢复全部原暂停记录，兼容同一批次七条备注丢失，外部记录保持', async () => {
