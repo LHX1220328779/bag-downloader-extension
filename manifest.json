@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "数据包回传与下载助手",
+  "short_name": "回传与下载",
+  "version": "2.5.7",
+  "description": "捕获网站筛选条件，按时间回传并自动下载，监测 MDC/NAS 在线状态，支持离线告警及恢复。",
+  "permissions": [
+    "storage",
+    "scripting",
+    "alarms",
+    "offscreen",
+    "sidePanel",
+    "notifications",
+    "unlimitedStorage",
+    "downloads",
+    "downloads.ui"
+  ],
+  "host_permissions": [
+    "http://10.198.92.173:8080/*",
+    "http://10.198.92.173:8099/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "数据包回传与下载助手",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://10.198.92.173:8080/*"
+      ],
+      "js": [
+        "content-main.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "http://10.198.92.173:8080/*"
+      ],
+      "js": [
+        "content-bridge.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "minimum_chrome_version": "120"
+}

@@ -1,0 +1,11 @@
+node_modules/
+.agents/
+.aws/
+.codex/
+.env
+.env.*
+*.log
+*.tmp
+*.bak
+__pycache__/
+.DS_Store

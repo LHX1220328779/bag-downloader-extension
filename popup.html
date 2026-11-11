@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>数据包回传与下载</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div class="brand"><img class="logo" src="icons/icon-32.png" width="32" height="32" alt=""><h1>数据包回传与下载</h1></div>
+      <div class="conn" id="conn"><span class="dot"></span><span id="connText">检测中</span></div>
+    </header>
+    <div id="alertSummary" class="alert-box" role="alert" hidden></div>
+
+    <details class="card setup-card" id="taskSetup" open>
+      <summary class="setup-head"><h2>任务设置与创建</h2><span class="setup-preview" id="setupPreview"></span><span class="disclosure" aria-hidden="true"></span></summary>
+      <div class="setup-body">
+        <section class="setup-section" id="directorySection">
+          <div class="card-head directory-settings"><h3>目录设置</h3><button class="directory-history-button" id="directoryHistoryButton" type="button" aria-haspopup="dialog" aria-controls="directoryHistory" aria-expanded="false" disabled>最近目录<span class="select-chevron" aria-hidden="true"></span></button></div>
+          <div class="directory-destination"><span class="folder-icon" aria-hidden="true"></span><textarea id="taskDirectory" rows="2" maxlength="4096" spellcheck="false" autocomplete="off" placeholder="粘贴完整本地保存路径" aria-label="本任务保存目录" aria-describedby="directoryAccessText directoryError"></textarea></div>
+          <div class="directory-access-row" id="directoryAccess" hidden><span id="directoryAccessText"></span></div>
+          <span class="error-text" id="directoryError" hidden></span>
+        </section>
+        <section class="setup-section">
+          <div class="card-head"><h3>目标筛选</h3><span class="muted" id="capTime"></span></div>
+          <div class="chips">
+            <div class="chip" id="chipTruck"><label>车辆编号</label><b id="capTruck">未选择</b></div>
+            <div class="chip" id="chipMine"><label>矿区</label><b id="capMine">未选择</b></div>
+            <div class="chip" id="chipType"><label>包类型</label><b id="capType">未选择</b></div>
+            <div class="chip" id="chipSource"><label>任务来源</label><b id="capSource">不限</b></div>
+          </div>
+        </section>
+        <section class="setup-section">
+          <div class="card-head"><h3>时间设置</h3><div class="segmented" role="group" aria-label="快捷时间"><button data-preset="today">今天</button><button data-preset="yesterday">昨天</button><button data-preset="week">近 7 天</button></div></div>
+          <div class="range">
+            <div class="field"><label for="startYear">开始时间</label><input type="hidden" id="start">
+              <div class="date-control" id="startControl" role="group" aria-label="开始时间" aria-describedby="startError">
+                <div class="date-parts" id="startDate"><input id="startYear" data-part="year" inputmode="numeric" maxlength="4" aria-label="开始年份"><span>/</span><input id="startMonth" data-part="month" inputmode="numeric" maxlength="2" aria-label="开始月份"><span>/</span><input id="startDay" data-part="day" inputmode="numeric" maxlength="2" aria-label="开始日期"></div>
+                <div class="date-parts time-parts" id="startTime"><input id="startHour" data-part="hour" inputmode="numeric" maxlength="2" aria-label="开始小时"><span>:</span><input id="startMinute" data-part="minute" inputmode="numeric" maxlength="2" aria-label="开始分钟"><span>:</span><input id="startSecond" data-part="second" inputmode="numeric" maxlength="2" aria-label="开始秒"></div>
+                <button class="calendar-trigger" id="startButton" type="button" aria-label="详细设置开始时间" aria-haspopup="dialog" aria-controls="datePopover" aria-expanded="false"><span class="calendar-icon" aria-hidden="true"></span></button>
+              </div><span class="date-input-error" id="startError" hidden>请输入有效的日期和时间</span>
+            </div>
+            <div class="field"><label for="endYear">结束时间</label><input type="hidden" id="end">
+              <div class="date-control" id="endControl" role="group" aria-label="结束时间" aria-describedby="endError">
+                <div class="date-parts" id="endDate"><input id="endYear" data-part="year" inputmode="numeric" maxlength="4" aria-label="结束年份"><span>/</span><input id="endMonth" data-part="month" inputmode="numeric" maxlength="2" aria-label="结束月份"><span>/</span><input id="endDay" data-part="day" inputmode="numeric" maxlength="2" aria-label="结束日期"></div>
+                <div class="date-parts time-parts" id="endTime"><input id="endHour" data-part="hour" inputmode="numeric" maxlength="2" aria-label="结束小时"><span>:</span><input id="endMinute" data-part="minute" inputmode="numeric" maxlength="2" aria-label="结束分钟"><span>:</span><input id="endSecond" data-part="second" inputmode="numeric" maxlength="2" aria-label="结束秒"></div>
+                <button class="calendar-trigger" id="endButton" type="button" aria-label="详细设置结束时间" aria-haspopup="dialog" aria-controls="datePopover" aria-expanded="false"><span class="calendar-icon" aria-hidden="true"></span></button>
+              </div><span class="date-input-error" id="endError" hidden>请输入有效的日期和时间</span>
+            </div>
+          </div>
+        </section>
+        <section class="setup-section operation-settings">
+          <div class="card-head"><h3>任务操作</h3></div>
+          <div class="task-operations" role="group" aria-label="任务操作">
+            <label class="operation-option"><input type="checkbox" id="modeTransfer" checked><span class="operation-check" aria-hidden="true"></span><span>回传</span></label>
+            <label class="operation-option"><input type="checkbox" id="modeDownload" checked><span class="operation-check" aria-hidden="true"></span><span>下载</span></label>
+          </div>
+        </section>
+        <section class="setup-section transfer-options" id="transferOptions">
+          <div class="card-head"><h3>回传设置</h3></div>
+          <div class="field"><label class="sr-only" for="reasonButton">回传原因</label><input type="hidden" id="reason"><button class="select-button" id="reasonButton" type="button" aria-label="回传原因" aria-haspopup="listbox" aria-controls="reasonOptions" aria-expanded="false"><span id="reasonText">请选择回传原因</span><span class="select-chevron" aria-hidden="true"></span></button></div>
+          <div class="extra-fields"><label class="field"><span class="sr-only">Bug 号</span><input id="bugId" maxlength="120" placeholder="Bug 号（可选）"></label><label class="field"><span class="sr-only">备注</span><input id="remarks" maxlength="500" placeholder="备注（可选）"></label></div>
+        </section>
+        <div class="create-actions"><button class="ghost-btn" id="createBtn" disabled>创建任务</button></div>
+        <p class="formmsg" id="formMsg" role="status"></p>
+        <div id="createErrorTools" hidden><button class="link-btn" id="copyCreateError" type="button">复制错误详情</button></div>
+      </div>
+    </details>
+
+    <section><div class="card-head list-head"><h2>任务列表</h2><span class="muted" id="taskCount">0 个</span></div><div id="tasks"></div><div class="empty" id="empty">暂无任务</div></section>
+  </div>
+
+  <div class="control-popover calendar-popover" id="datePopover" popover="auto" role="dialog" aria-labelledby="calendarTitle">
+    <div class="calendar-head"><button class="icon-button" id="monthPrev" aria-label="上个月">‹</button><strong id="calendarTitle"></strong><button class="icon-button" id="monthNext" aria-label="下个月">›</button></div>
+    <div class="weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="calendar-grid" id="calendarDays" role="group" aria-label="日期"></div>
+    <div class="time-editor"><span>时间</span><label><span class="sr-only">小时</span><input id="dateHour" type="number" min="0" max="23" step="1" aria-label="小时"></label><i>:</i><label><span class="sr-only">分钟</span><input id="dateMinute" type="number" min="0" max="59" step="1" aria-label="分钟"></label><i>:</i><label><span class="sr-only">秒</span><input id="dateSecond" type="number" min="0" max="59" step="1" aria-label="秒"></label></div>
+    <p class="error-text" id="dateError" hidden></p>
+    <div class="popover-actions"><button class="link-btn" id="dateToday">今天</button><button class="btn" id="dateCancel">取消</button><button class="btn primary-sm" id="dateApply">确定</button></div>
+  </div>
+  <div class="control-popover reason-popover" id="reasonPopover" popover="auto"><div id="reasonOptions" role="listbox" aria-label="回传原因"></div></div>
+  <div class="control-popover directory-popover" id="directoryHistory" popover="auto" role="dialog" aria-label="最近保存目录"><div id="directoryChoices"></div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="dirstore.js"></script><script src="directory-health.js"></script><script src="directory-paths.js"></script><script src="directory-picker.js"></script><script src="task-directories.js"></script><script src="task-core.js"></script><script src="popup-controls.js"></script><script src="popup-renderer.js"></script><script src="popup.js"></script>
+</body>
+</html>

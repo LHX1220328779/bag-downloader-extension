@@ -1,0 +1,62 @@
+{
+  "archive": [
+    {
+      "filename": "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-42-25_200.bag",
+      "truck_no": "HNMZ-Truck06",
+      "break_source": "mdc",
+      "create_time": "2026-11-06 08:42:25",
+      "dirpath": "/data/bags/HNMZ-Truck06/2026-11-06/08/Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-42-25_200.bag",
+      "filesize": "922.16"
+    },
+    {
+      "filename": "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-09-34-55_305.bag",
+      "truck_no": "HNMZ-Truck06",
+      "break_source": "mdc",
+      "create_time": "2026-11-06 09:34:55",
+      "dirpath": "/data/bags/HNMZ-Truck06/2026-11-06/09/Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-09-34-55_305.bag",
+      "filesize": "863.37"
+    }
+  ],
+  "mdc": [
+    {
+      "filename": "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-48-25_212.bag",
+      "truck_no": "HNMZ-Truck06",
+      "create_time": "2026-11-06 08:50:38",
+      "dirpath": "/opt/usr/log/nasbag/alwaysrecord/Perception_*.bag",
+      "filesize": 858.82
+    },
+    {
+      "filename": "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-47-55_211.bag",
+      "truck_no": "HNMZ-Truck06",
+      "create_time": "2026-11-06 11:35:48",
+      "dirpath": "/opt/usr/log/nasbag/alwaysrecord/Perception_*.bag",
+      "filesize": 857.84
+    },
+    {
+      "filename": "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-47-25_210.bag",
+      "truck_no": "HNMZ-Truck06",
+      "create_time": "2026-11-06 08:49:38",
+      "dirpath": "/opt/usr/log/nasbag/alwaysrecord/Perception_*.bag",
+      "filesize": 774.85
+    }
+  ],
+  "oldBounds": {
+    "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-42-25_200.bag": {
+      "checkedAt": 1793936057420.0,
+      "clock": "Real",
+      "fileSize": 966957213,
+      "filename": "Perception_huaining_06_ConchPilot6.1_2026.09.04_V6.1.1_hotfix08_2026-11-06-08-42-25_200.bag",
+      "format": "RTFBAG",
+      "start": 1793925745671.0,
+      "stop": 1793925775599.0
+    }
+  },
+  "filters": {
+    "bag_type": "Perception",
+    "break_source": "",
+    "mine_code": "HNMZ",
+    "truck_no": "HNMZ-Truck06"
+  },
+  "start": "2026-11-06 08:47:30",
+  "end": "2026-11-06 08:48:20"
+}
