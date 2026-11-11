@@ -183,7 +183,9 @@ function progressCard(t, transfer) {
     let status = BAG_STATE[i.state] || i.state;
     if (i.skipped) status = '本地文件已验证';
     if (transfer && i.state !== 'done' && i.serverStatus === 'pause') status = '回传已暂停';
+    else if (transfer && i.state !== 'done' && ['waiting', 'cancelpause'].includes(i.serverStatus)) status = '等待回传';
     else if (transfer && i.state === 'pending' && !BagCore.isTransferEnabled(t)) status = '等待开启回传';
+    else if (transfer && t.status === 'waiting_vehicle' && ['pending', 'submitted'].includes(i.state)) status = '等待车辆上线';
     if (transfer && ['submitted', 'confirming'].includes(i.state)) status += ` · ${Math.round(i.percentage || 0)}%`;
     if (!transfer && i.needsValidation && i.jobId) status = '核验完整文件';
     else if (!transfer && i.state === 'downloading') status += ` · ${bytesText(i.bytes)}${i.totalBytes ? ' / ' + bytesText(i.totalBytes) : ''}`;

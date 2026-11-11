@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "数据包回传与下载助手",
   "short_name": "回传与下载",
-  "version": "2.5.8",
+  "version": "2.5.9",
   "description": "捕获网站筛选条件，按时间回传并自动下载，监测 MDC/NAS 在线状态，支持离线告警及恢复。",
   "permissions": [
     "storage",

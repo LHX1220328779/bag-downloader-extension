@@ -61,11 +61,13 @@ test('关闭暂停本任务全部未完成记录，重叠任务和手工回传�
   assert(e.server.records.slice(0, 7).every(r => ['pause', 'succeed'].includes(r.status)));
   assert.deepEqual(e.server.records.slice(7), foreign);
   assert.equal(e.get(id).transferControl.phase, 'settled'); assert.equal(e.get(id).transferControl.paused, 6);
+  assert(e.get(id).transfers.every(i => Number(i.recordNo) >= 1 && Number(i.recordNo) <= 7), '外部同名记录不能覆盖本任务的原记录绑定');
   assert.equal(e.get(id).runToken, original.runToken); assert.equal(e.get(id).dirPath, original.dirPath);
   await switchTo(e, id, true);
   assert.deepEqual(e.transferCommands.filter(c => c.enabled).map(c => c.recordNo).sort(), ['1', '2', '3', '4', '5', '7']);
   assert.equal(e.submissions.length, 7); assert.equal(e.server.records[5].status, 'succeed');
   assert(e.get(id).transfers.every(i => i.submissionLocked));
+  assert(e.get(id).transfers.every(i => Number(i.recordNo) >= 1 && Number(i.recordNo) <= 7));
 });
 
 test('多批次全部控制，记录无文件名时仍按本任务批次标记暂停、恢复', async () => {
@@ -76,6 +78,80 @@ test('多批次全部控制，记录无文件名时仍按本任务批次标记�
   assert(e.server.records.every(r => r.status === 'pause'));
   await switchTo(e, id, true); assert.equal(e.transferCommands.length, 70);
   assert(e.server.records.every(r => r.status === 'cancelpause')); assert.equal(e.submissions.length, 35);
+});
+
+test('旧任务的备注丢失时，按提交批次、原编号和完整文件名恢复绑定，不能只匹配文件名或编号', () => {
+  const item = { ...a, key: C.fileKey(a), recordNo: 71, batchId: 'legacy-batch', accepted: true,
+    submissionLocked: true, attempts: 1, submittedAt: 20, state: 'submitted' };
+  const t = C.normalizeTask({ id: 'legacy-task', kind: 'transfer', createdAt: 10,
+    filters: { truck_no: 'WH-Truck05', mine_code: 'WH', bag_type: 'Perception' },
+    transfers: [item], transferBatchIds: ['legacy-batch'] });
+  const r = { record_no: 71, truck_no: 'WH-Truck05', break_source: 'mdc', task_type: 'Perception',
+    status: 'pause', remarks: '', msg: `同步失败:['${a.filename}任务暂停']` };
+  assert(T.owns(t, r), '完整历史绑定应兼容服务器不返回任务备注');
+  assert(!T.owns({ ...t, transferControlRecords: [{ recordNo: '70', provenance: { kind: 'server-marker', filename: a.filename } }] }, r),
+    '已经确认另一个原记录时，旧进度命中的同名外部编号不能升级为归属');
+  for (const patch of [{ recordNo: 72 }, { batchId: '' }, { accepted: false }, { submissionLocked: false },
+    { attempts: 0 }, { submittedAt: 0 }, { submittedAt: 5 }, { submissionRejected: true }]) {
+    assert(!T.owns({ ...t, transfers: [{ ...item, ...patch }] }, r), JSON.stringify(patch));
+  }
+  for (const patch of [{ record_no: 72 }, { truck_no: 'OTHER' }, { mine_code: 'OTHER' }, { break_source: '手工' },
+    { task_type: 'Camera' }, { remarks: '[BagFlowTask:other-task]' }, { msg: `${a.filename}.backup` }, { msg: '' }]) {
+    assert(!T.owns(t, { ...r, ...patch }), JSON.stringify(patch));
+  }
+});
+
+test('同批其他记录不能掩盖已绑定原记录的缺失，不得误报恢复全部完成', () => {
+  const items = [a, b].map((i, n) => ({ ...i, recordNo: n + 1, batchId: 'one-batch',
+    attempts: 1, submittedAt: 20, submissionLocked: true, accepted: true, state: 'submitted' }));
+  const t = C.normalizeTask({ id: 'one-task', kind: 'transfer', status: 'waiting_vehicle',
+    filters: { truck_no: 'WH-Truck05', mine_code: 'WH' }, transfers: items,
+    transferEnabled: true, transferControlRevision: 2 });
+  const rows = [{ record_no: 1, truck_no: 'WH-Truck05', break_source: 'mdc', status: 'cancelpause',
+    remarks: '[BagFlowBatch:one-batch]', breaktime: a.create_time.slice(0, 16) }];
+  assert.equal(T.synchronize(t, rows, 100).length, 0);
+  assert.equal(t.transferControl.awaitingRecords, 1);
+  assert.equal(t.transferControl.phase, 'waiting');
+});
+
+test('车辆离线时恢复全部原暂停记录，兼容同一批次七条备注丢失，外部记录保持', async () => {
+  const e = await background(); e.server.mdc = catalog(10); const id = await start(e);
+  await e.call('tickTask', id); await flush();
+  const legacy = structuredClone(e.state), original = e.get(id);
+  legacy.tasks[0].transferControlRecords = [];
+  for (let n = 0; n < e.server.records.length; n++) {
+    const r = e.server.records[n];
+    if (n < 7) { r.msg = `同步失败:['${r.filename}任务暂停']`; r.remarks = ''; delete r.filename; }
+    r.status = n < 7 ? 'pause' : 'cancelpause';
+  }
+  e.server.records.push({ ...e.server.records[0], record_no: 91, remarks: '[BagFlowTask:other-task]' });
+  e.server.online = false;
+  const reboot = await background({}, { state: legacy, server: e.server, now: e.context.Date.now() + 60000 });
+  await flush(); assert.equal(reboot.get(id).vehicleOnline, false);
+  await switchTo(reboot, id, false); await switchTo(reboot, id, true);
+  assert(reboot.server.records.slice(0, 10).every(r => r.status === 'cancelpause'), '七条丢失备注的原暂停记录也必须解除暂停');
+  assert.equal(reboot.server.records[10].status, 'pause');
+  const restored = reboot.get(id);
+  assert.equal(restored.status, 'waiting_vehicle'); assert.equal(restored.vehicleOnline, false);
+  assert.equal(restored.transferControl.phase, 'settled'); assert.equal(restored.transferControl.total, 10);
+  assert(restored.transfers.every(i => i.serverStatus === 'cancelpause' && !i.error));
+  assert.equal(restored.runToken, original.runToken); assert.equal(restored.dirId, original.dirId);
+  assert.deepEqual(restored.transfers.map(i => i.recordNo), original.transfers.map(i => i.recordNo));
+  assert.equal(reboot.submissions.length, 0, '离线恢复只处理原记录，不创建新回传');
+});
+
+test('首次操作开关前保存原记录归属，备注及文件名后来全部消失仍可跨重启恢复', async () => {
+  const e = await background(), id = await start(e);
+  await e.call('tickTask', id); await flush();
+  assert.equal(e.get(id).transferControlRevision, 0);
+  assert.equal(e.get(id).transferControlRecords.length, 2, '普通进度核查就应持久保存归属，不能等首次切换');
+  e.server.records.forEach(r => { r.status = 'pause'; r.remarks = ''; delete r.filename; r.msg = ''; });
+  e.server.online = false;
+  const reboot = await background({}, { state: e.state, server: e.server, now: e.context.Date.now() + 60000 });
+  await switchTo(reboot, id, false); await switchTo(reboot, id, true);
+  assert(reboot.server.records.every(r => r.status === 'cancelpause'));
+  assert(reboot.get(id).transfers.every(i => i.serverStatus === 'cancelpause' && !i.error));
+  assert.equal(reboot.submissions.length, 0);
 });
 
 test('开关未操作时保留网站手工暂停，升级默认开启不会自动恢复远端记录', async () => {

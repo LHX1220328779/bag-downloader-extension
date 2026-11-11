@@ -514,11 +514,15 @@ function clearTransferRetry(i) {
 }
 function findRecord(t, i, records) {
   const relevant = records.filter((r) => String(r.truck_no) === t.filters.truck_no && r.break_source === 'mdc');
+  const id = TransferSwitch.recordId(i.recordNo);
+  const linked = id && relevant.find(r => TransferSwitch.recordId(r.record_no) === id && TransferSwitch.owns(t, r));
   const exact = relevant.filter((r) => C.text(r.remarks).includes(marker(t, i)) || r.filename === i.filename ||
     C.text(r.msg).includes(i.filename));
   // 后一次重复提交的失败不能覆盖已有的正常回传/成功记录。
   const rank = { succeed: 6, downloading: 5, waiting: 4, cancelpause: 3, pause: 2, failed: 1 };
-  if (exact.length) return { ...exact.sort((a, b) => (rank[b.status] || 0) - (rank[a.status] || 0) || Number(b.record_no) - Number(a.record_no))[0], exact: true };
+  if (exact.length) return { ...exact.sort((a, b) => Number(TransferSwitch.owns(t, b)) - Number(TransferSwitch.owns(t, a)) ||
+    (rank[b.status] || 0) - (rank[a.status] || 0) || Number(b.record_no) - Number(a.record_no))[0], exact: true };
+  if (linked) return { ...linked, exact: true };
   const activeRecords = relevant.filter((r) => ['waiting', 'downloading', 'pause', 'cancelpause'].includes(r.status));
   const batch = activeRecords.find((r) => !r.filename && i.batchId && C.text(r.remarks).includes(`[BagFlowBatch:${i.batchId}]`) &&
     C.text(r.breaktime).slice(0, 16) === i.create_time.slice(0, 16));
@@ -622,6 +626,8 @@ async function driveTransfer(t) {
     let keys = [];
     await edit(t.id, t.runToken, (s, all) => {
       s.transferError = '';
+      // 在首次切换前就保存已核实的原记录。后续备注/文件名缺失也不会失去暂停恢复能力。
+      TransferSwitch.remember(s, records, Date.now());
       for (const i of s.transfers) {
         if (i.coverageExcluded || i.state === 'done') continue;
         const r = findRecord(s, i, records);

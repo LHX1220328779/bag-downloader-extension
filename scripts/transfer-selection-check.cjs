@@ -20,6 +20,8 @@ const server = http.createServer(async (req, res) => {
     row.status = command[1] === 'pause' ? 'pause' : 'cancelpause'; return json(res, 'ok', 2000);
   }
   if (pathname === '/api/break/search') return json(res, records);
+  if (pathname === '/api/truck/info') return json(res, [{ value: 'WH-Truck05', status: false, connect_msg: 'fixture vehicle offline' }]);
+  if (pathname === '/api/bag/search') return json(res, []);
   if (pathname.startsWith('/api/bag/progress/')) return json(res, 23, 2000);
   const lookups = { '/api/truck/mine_list': [{ value: 'WH', name: '芜湖' }], '/api/truck/type_list': [{ value: 'Perception', name: '感知' }],
     '/api/truck/source_list': [{ value: 'mdc', name: 'mdc' }], '/api/bag/use_class': [{ value: '01', name: '问题分析' }] };
@@ -146,6 +148,8 @@ async function main() {
   // 开启后恢复原记录，快速点击立即表现当前用户选择。
   const immediate = await page.evaluate(() => { const b = document.querySelector('[data-act="transfer"]'); b.click(); return b.getAttribute('aria-pressed'); });
   assert.equal(immediate, 'true'); await settle(worker, page, true); assert(records.every(r => r.status === 'cancelpause'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.bag-detail')].length === 2 &&
+    [...document.querySelectorAll('.bag-detail')].every(el => el.textContent.includes('等待回传')));
   assert.deepEqual(records.map(r => r.record_no), [11, 12]);
   pauseFailures = 2; await page.locator('[data-act="transfer"]').click();
   await wait(page, s => s.tasks[0]?.transferControl?.phase === 'retry');
@@ -170,11 +174,35 @@ async function main() {
   await page.evaluate(() => { chrome.runtime.sendMessage = originalSelectionSend; });
   await page.locator('[data-act="transfer"]').click(); await settle(worker, page, false);
   await page.waitForFunction(() => !document.querySelector('.transfer-control-note')?.textContent.includes('尚未更新'));
-  const final = await state(page); assert.equal(final.tasks[0].runToken, 'preserved-run'); assert.equal(final.tasks[0].dirPath, 'D:\\数据\\车辆05\\rtfbag');
-  assert(!requests.some(r => /\/api\/break\/remove|\/api\/bag\/mdcadd/.test(r.pathname)), '暂停恢复不能删除或重建原回传');
   await page.screenshot({ path: path.join(output, 'paused.png'), fullPage: true });
+  // 旧任务已绑定原编号与批次，但服务器备注丢失；车辆离线也必须恢复原记录。
+  for (const r of records) { r.msg = `同步失败:['${r.filename}任务暂停']`; r.remarks = ''; delete r.filename; }
+  await page.evaluate(async () => {
+    const { tasks } = await chrome.storage.local.get('tasks'), t = tasks[0];
+    t.status = 'waiting_vehicle'; t.vehicleOnline = false; t.discovered = true; t.searchReady = true;
+    t.transferControlRecords = []; t.transferBatchIds = ['offline-legacy-batch'];
+    for (const i of t.transfers) { i.batchId = 'offline-legacy-batch'; i.serverStatus = 'pause'; i.error = '服务器已暂停，持续核查'; }
+    await chrome.storage.local.set({ tasks }); await load();
+  });
+  const beforeResume = requests.length;
+  await page.locator('[data-act="transfer"]').click(); await settle(worker, page, true);
+  await page.waitForFunction(() => tasks[0]?.status === 'waiting_vehicle' &&
+    [...document.querySelectorAll('.bag-detail')].every(el => el.textContent.includes('等待回传')));
+  await page.waitForFunction(() => document.querySelector('[data-act="transfer"]').getAttribute('aria-busy') === 'false');
+  if (await page.locator('.task-fold').getAttribute('open') === null) await page.locator('.task-top').click();
+  assert(records.every(r => r.status === 'cancelpause'));
+  assert.equal(requests.slice(beforeResume).filter(r => r.pathname.startsWith('/api/break/cancelpause/')).length, 2);
+  assert.equal(await page.locator('.transfer-control-note').count(), 0);
+  assert.equal(await page.locator('.bags .error-text').count(), 0, '解除暂停后必须清除每包的旧暂停提示');
+  for (const theme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: theme });
+    await page.screenshot({ path: path.join(output, `offline-restored-${theme}.png`), fullPage: true });
+  }
+  const final = await state(page); assert.equal(final.tasks[0].runToken, 'preserved-run'); assert.equal(final.tasks[0].dirPath, 'D:\\数据\\车辆05\\rtfbag');
+  assert.equal(final.tasks[0].vehicleOnline, false); assert.equal(final.tasks[0].transferEnabled, true);
+  assert(!requests.some(r => /\/api\/break\/remove|\/api\/bag\/mdcadd/.test(r.pathname)), '暂停恢复不能删除或重建原回传');
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, requests, records, final }, null, 2));
-  console.log('选择持久化验收通过：立即勾选/取消、淡色圆弧加载、六种布局与减少动态效果、常规状态不占行高、异步加载竞态、旧快照覆盖、心跳、重开、失败保持及后台版本不一致；仅暂停恢复原回传。\n' + output);
+  console.log('选择与离线恢复验收通过：旧任务备注缺失、原记录恢复并显示等待回传、旧暂停提示清除；立即勾选/取消、淡色圆弧加载、六种布局、减少动态效果、异步加载竞态、心跳、重开、失败保持及后台版本不一致。\n' + output);
 }
 main().catch(e => { console.error(e); console.error(output); process.exitCode = 1; }).finally(async () => {
   if (context) await context.close(); server.closeAllConnections(); server.close();

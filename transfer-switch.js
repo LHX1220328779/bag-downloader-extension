@@ -13,8 +13,10 @@
     return `[BagFlow:${t.id}:${hash.toString(16)}]`;
   }
   function inScope(t, r) {
+    const type = C.text(r.bag_type || r.task_type);
     return C.text(r.truck_no) === t.filters.truck_no && r.break_source === 'mdc' &&
-      (!C.text(r.mine_code) || C.text(r.mine_code) === t.filters.mine_code);
+      (!C.text(r.mine_code) || C.text(r.mine_code) === t.filters.mine_code) &&
+      (!type || !t.filters.bag_type || C.typeMatches(type, t.filters.bag_type));
   }
   function tagged(t, r) {
     const remarks = C.text(r.remarks);
@@ -27,7 +29,54 @@
   function owns(t, r) {
     if (!inScope(t, r)) return false;
     const id = recordId(r.record_no);
-    return tagged(t, r) || !!(id && (t.transferControlRecords || []).some(x => x.recordNo === id));
+    return tagged(t, r) || !!(id && (t.transferControlRecords || []).some(x => x.recordNo === id)) || !!binding(t, r);
+  }
+  function matchesFile(i, r) {
+    const filename = C.text(i.filename);
+    if (!filename) return false;
+    if (C.text(r.filename)) return C.text(r.filename) === filename;
+    const escaped = filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^A-Za-z0-9_.-])${escaped}(?=$|[^A-Za-z0-9_.-])`).test(C.text(r.msg));
+  }
+  function binding(t, r) {
+    const id = recordId(r.record_no);
+    if (!id || !inScope(t, r) || C.text(r.remarks).includes('[BagFlow')) return null;
+    // 兼容旧任务：必须同时保留原编号、已保存的提交批次、提交时间、接受状态及完整包名。
+    // 进度查询匹配到的同名外部记录，只有 recordNo 或分钟时间，不能取得控制权。
+    const batches = new Set(t.transferBatchIds || []);
+    const item = (t.transfers || []).find(i => recordId(i.recordNo) === id && i.accepted === true &&
+      i.submissionLocked === true && Number(i.attempts) > 0 && Number.isFinite(i.submittedAt) && i.submittedAt > 0 &&
+      (!t.createdAt || i.submittedAt >= t.createdAt) && !i.submissionRejected &&
+      recordId(i.batchId) && batches.has(i.batchId) && matchesFile(i, r));
+    const original = item && (t.transferControlRecords || []).some(x => x.recordNo !== id && x.provenance?.filename === item.filename);
+    return item && !original ? { kind: 'legacy-binding', filename: item.filename, batchId: item.batchId, submittedAt: item.submittedAt } : null;
+  }
+  function remember(t, rows, now) {
+    const known = new Map((t.transferControlRecords || []).map(r => [r.recordNo, r]));
+    const store = (row, proof) => {
+      const id = recordId(row.record_no);
+      const entry = known.get(id) || { recordNo: id };
+      entry.provenance ||= proof;
+      if (proof.filename) entry.provenance.filename ||= proof.filename;
+      entry.status = C.text(row.status); entry.seenAt = now;
+      known.set(id, entry);
+    };
+    // 先登记有标记或已确认的原记录，再补历史绑定，防止旧进度命中的同名外部记录取代原记录。
+    for (const row of rows) {
+      const id = recordId(row.record_no), marked = tagged(t, row);
+      if (!id || !inScope(t, row) || (!marked && !known.has(id))) continue;
+      const items = (t.transfers || []).filter(i => matchesFile(i, row));
+      store(row, { kind: marked ? 'server-marker' : 'confirmed-record', ...(items.length === 1 ? { filename: items[0].filename } : {}) });
+    }
+    t.transferControlRecords = [...known.values()];
+    for (const row of rows) {
+      const id = recordId(row.record_no);
+      if (!id || known.has(id)) continue;
+      const proof = binding(t, row);
+      if (proof) store(row, proof);
+    }
+    t.transferControlRecords = [...known.values()];
+    return known;
   }
   function needsCommand(enabled, status) {
     return enabled ? status === 'pause' : PAUSABLE.includes(status);
@@ -42,9 +91,15 @@
     return unfinished || (t.status !== 'done' && (t.transfers || []).some(i => !i.coverageExcluded && i.state !== 'done'));
   }
   function hasItemRecord(t, i, records) {
-    return records.some(r => recordId(r.record_no) === recordId(i.recordNo) || C.text(r.remarks).includes(marker(t, i)) ||
-      r.filename === i.filename || C.text(r.msg).includes(i.filename) ||
-      (!r.filename && i.batchId && C.text(r.remarks).includes(`[BagFlowBatch:${i.batchId}]`)));
+    const id = recordId(i.recordNo);
+    if (id) return records.some(r => recordId(r.record_no) === id);
+    if (records.some(r => C.text(r.remarks).includes(marker(t, i)) || matchesFile(i, r))) return true;
+    if (!i.batchId) return false;
+    const peers = (t.transfers || []).filter(x => x.batchId === i.batchId);
+    const ids = new Set(records.filter(r => !r.filename && C.text(r.remarks).includes(`[BagFlowBatch:${i.batchId}]`))
+      .map(r => recordId(r.record_no)).filter(Boolean));
+    // 没有单包编号的旧批次也要核对记录数量，不能用一条同批记录代表所有包。
+    return peers.length > 0 && ids.size >= peers.length;
   }
   function message(control) {
     const action = control.enabled ? '恢复' : '暂停';
@@ -57,7 +112,7 @@
   }
   function synchronize(t, rows, now) {
     const enabled = C.isTransferEnabled(t), revision = t.transferControlRevision;
-    const known = new Map((t.transferControlRecords || []).map(r => [r.recordNo, r]));
+    const known = remember(t, rows, now);
     const visible = new Map(); let invalid = 0;
     for (const r of rows) {
       if (!owns(t, r)) continue;
@@ -96,7 +151,7 @@
     t.transferControl.message = message(t.transferControl);
     return commands;
   }
-  const api = { marker, recordId, inScope, tagged, owns, needsCommand, delay, needsSync, synchronize, message };
+  const api = { marker, recordId, inScope, tagged, owns, matchesFile, binding, remember, needsCommand, delay, needsSync, synchronize, message };
   root.TransferSwitch = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);
