@@ -186,6 +186,12 @@ async function waitState(page, predicate, timeout = 10000) {
   const state=await getState(page);fs.writeFileSync(path.join(output,'wait-state.json'),JSON.stringify(state,null,2));
   throw Error('状态等待超时: ' + JSON.stringify(state.tasks.map(t=>({id:t.id,status:t.status,message:t.message,directoryAccess:t.directoryAccess,done:t.items.filter(i=>i.state==='done').length,total:t.items.length}))));
 }
+async function freshTick(worker, id) {
+  // 重载会自动开始检测；先等旧请求结束，避免本次 tick 复用变化前的在线结果。
+  await worker.evaluate(async id => {
+    await operations.get(`tick:${id}`); await operations.get(`vehicle:${id}`); await tickTask(id);
+  }, id);
+}
 async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let { worker, page, errors } = await launch();
@@ -376,12 +382,12 @@ async function main() {
   await waitState(page, s => s.tasks[0].status === 'running' && s.tasks[0].transfers.every(i => i.state === 'submitted'));
   assert.equal((await getState(page)).tasks[0].runToken, runToken); assert.equal(batches.length, 1);
   const alertPage = await context.newPage(); await alertPage.goto('http://10.198.92.173:8080/search');
-  online = false; await worker.evaluate(id => tickTask(id), taskId); await waitState(page, s => s.tasks[0].status === 'waiting_vehicle');
+  online = false; await freshTick(worker, taskId); await waitState(page, s => s.tasks[0].status === 'waiting_vehicle');
   assert.equal(await alertPage.evaluate(() => document.documentElement.children.length), 2);
   assert.equal(await alertPage.locator('[style*="position:fixed"]').count(), 0);
   await alertPage.reload(); assert.equal(await alertPage.evaluate(() => document.documentElement.children.length), 2);
   await alertPage.close(); await page.bringToFront();
-  online = true; await worker.evaluate(id => tickTask(id), taskId); assert.equal(batches.length, 1);
+  online = true; await freshTick(worker, taskId); assert.equal(batches.length, 1);
   await page.evaluate(async ({ dirId, name }) => { const dir = (await DirStore.get(dirId)).handle; const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(new Uint8Array([9, 9])); await w.close(); }, { dirId, name: files[1].filename });
   available = true; records.forEach(r => r.status = 'succeed'); await worker.evaluate(id => tickTask(id), taskId);
   await waitState(page, s => s.tasks[0].items.length === 2 && s.tasks[0].items[0].state === 'done' && s.tasks[0].items[1].state === 'pending' && s.tasks[0].items[1].networkRetries > 0);

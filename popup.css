@@ -12,6 +12,7 @@
   --amber: #a36600;
   --red: #d70015;
   --blue-fill: rgba(0, 122, 255, .09);
+  --transfer-busy-fill: rgba(0, 122, 255, .045);
   --radius: 16px;
 }
 @media (prefers-color-scheme: dark) {
@@ -28,6 +29,7 @@
     --amber: #ffb340;
     --red: #ff6961;
     --blue-fill: rgba(10, 132, 255, .14);
+    --transfer-busy-fill: rgba(10, 132, 255, .065);
   }
 }
 * { box-sizing: border-box; }
@@ -114,9 +116,12 @@ summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .btn.stop { background: rgba(255, 69, 58, .09); color: var(--red); }
 .btn.transfer-toggle { display: inline-flex; align-items: center; gap: 5px; background: var(--inner); color: var(--muted); }
 .btn.transfer-toggle.selected { background: var(--blue-fill); color: var(--blue); }
+.btn.transfer-toggle[aria-busy="true"] { background: var(--transfer-busy-fill); color: var(--muted); }
 .transfer-check { display: inline-grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 4px; font-size: 10px; line-height: 1; }
-.transfer-icon { display: inline-flex; position: relative; align-items: center; justify-content: center; width: 15px; height: 15px; flex-shrink: 0; }
-.transfer-spinner { position: absolute; right: -4px; top: -5px; width: 11px; height: 11px; font-size: 12px; line-height: 11px; border-radius: 50%; background: var(--inner); animation: transfer-spin .9s linear infinite; }
+.transfer-icon { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; flex-shrink: 0; }
+.transfer-indicator { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; flex-shrink: 0; visibility: hidden; }
+.btn.transfer-toggle[aria-busy="true"] .transfer-indicator { visibility: visible; }
+.transfer-spinner { display: block; width: 12px; height: 12px; overflow: visible; animation: transfer-spin 1.05s linear infinite; }
 @keyframes transfer-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .transfer-spinner { animation: none; } }
 .transfer-control-note { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }

@@ -65,9 +65,49 @@ async function slowLoadRace(worker, page) {
   await worker.evaluate(id => setTransferEnabled(id, false), id);
   await page.waitForFunction(id => tasks.find(t => t.id === id)?.transferEnabled === false && slowReads.length > 0 &&
     document.querySelector(`[data-id="${id}"] [data-act="transfer"]`).getAttribute('aria-pressed') === 'true', id);
-  const immediate = await page.evaluate(id => { const button = document.querySelector(`[data-id="${id}"] [data-act="transfer"]`); button.click();
-    return { pressed: button.getAttribute('aria-pressed'), busy: button.getAttribute('aria-busy'), spinner: button.querySelectorAll('.transfer-spinner').length }; }, id);
-  await page.evaluate(() => { slowDirectory = false; slowReads.splice(0).forEach(resolve => resolve()); });
+  // 保持这次保存请求等待，避免本地夹具过快确认导致加载截图提前结束。
+  await page.evaluate(() => {
+    window.selectionOriginalSend = chrome.runtime.sendMessage.bind(chrome.runtime);
+    window.selectionGate = new Promise(resolve => { window.releaseSelection = resolve; });
+    chrome.runtime.sendMessage = async message => {
+      if (message.type === 'transfer:set') await selectionGate;
+      return selectionOriginalSend(message);
+    };
+  });
+  const immediate = await page.evaluate(id => { const button = document.querySelector(`[data-id="${id}"] [data-act="transfer"]`), card = button.closest('.task');
+    const width = button.getBoundingClientRect().width, height = card.getBoundingClientRect().height, idleColor = getComputedStyle(button).color;
+    button.click();
+    return { requestId: pendingTransferChoices.get(id)?.requestId, pressed: button.getAttribute('aria-pressed'), busy: button.getAttribute('aria-busy'), spinner: button.querySelectorAll('svg.transfer-spinner').length,
+      widthChange: button.getBoundingClientRect().width - width, heightChange: card.getBoundingClientRect().height - height,
+      idleColor, busyColor: getComputedStyle(button).color, visibleNotes: card.querySelectorAll('.transfer-control-note').length }; }, id);
+  for (const theme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: theme });
+    for (const width of [300, 380, 720]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const layout = await page.evaluate(() => {
+        const button = document.querySelector('[data-act="transfer"]'), card = button.closest('.task');
+        const actions = [...card.querySelectorAll('.actions > button')].map(b => b.getBoundingClientRect());
+        const style = getComputedStyle(button), status = card.querySelector('.transfer-status')?.getBoundingClientRect();
+        return { overflow: document.documentElement.scrollWidth > innerWidth, sameRow: new Set(actions.map(r => r.top)).size === 1,
+          actionOverflow: actions.some(r => r.x < 0 || r.right > innerWidth), background: style.backgroundColor,
+          statusHeight: status?.height || 0, spinner: button.querySelectorAll('svg.transfer-spinner').length, disabled: button.disabled };
+      });
+      assert(!layout.overflow && !layout.actionOverflow && layout.sameRow, '加载时所有操作按钮应在可见范围内同一行');
+      assert(layout.statusHeight <= 1, '常规回传状态应仅供辅助技术读取，不占视觉空间');
+      const alpha = Number(layout.background.match(/,\s*([\d.]+)\)$/)?.[1]);
+      assert(alpha > 0 && alpha < .08, '明暗主题的加载按钮均使用淡色背景');
+      assert.equal(layout.spinner, 1); assert.equal(layout.disabled, false, '等待期间仍可改变回传选择');
+      await page.screenshot({ path: path.join(output, `busy-${theme}-${width}.png`), fullPage: true });
+    }
+  }
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  assert.equal(await page.locator('.transfer-spinner').evaluate(el => getComputedStyle(el).animationName), 'none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' }); await page.setViewportSize({ width: 380, height: 1000 });
+  await page.evaluate(() => {
+    chrome.runtime.sendMessage = selectionOriginalSend; releaseSelection();
+    slowDirectory = false; slowReads.splice(0).forEach(resolve => resolve());
+  });
+  await wait(page, s => s.taskTransferSelections[id]?.requestId === immediate.requestId);
   await page.waitForFunction(() => !loading);
   const result = await state(page);
   if (process.argv.includes('--reproduce-old-race')) {
@@ -75,10 +115,14 @@ async function slowLoadRace(worker, page) {
     assert.equal(result.tasks[0].transferEnabled, false, '可见勾选为开启时点击应关闭，不能被异步任务快照反向开启');
   }
   assert.equal(immediate.pressed, 'false', '点击必须立即取消勾选'); assert.equal(immediate.busy, 'true'); assert.equal(immediate.spinner, 1);
+  assert(Math.abs(immediate.widthChange) < 1, '加载时按钮宽度应保持稳定');
+  assert(Math.abs(immediate.heightChange) < 1, '常规回传状态不应新增卡片行高');
+  assert.notEqual(immediate.busyColor, immediate.idleColor, '等待时按钮使用柔和颜色'); assert.equal(immediate.visibleNotes, 0);
   await settle(worker, page, false);
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"] [data-act="transfer"]`).getAttribute('aria-pressed') === 'false', id);
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"] [data-act="transfer"]`).getAttribute('aria-busy') === 'false', id);
   assert.equal(await page.locator('.transfer-spinner').count(), 0);
+  assert.equal(await page.locator('.transfer-control-note').count(), 0, '服务器确认后不显示占位状态文字');
 }
 async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -130,7 +174,7 @@ async function main() {
   assert(!requests.some(r => /\/api\/break\/remove|\/api\/bag\/mdcadd/.test(r.pathname)), '暂停恢复不能删除或重建原回传');
   await page.screenshot({ path: path.join(output, 'paused.png'), fullPage: true });
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, requests, records, final }, null, 2));
-  console.log('选择持久化验收通过：立即勾选/取消、刷新标识、异步加载竞态、旧快照覆盖、心跳、重开、失败保持及后台版本不一致；仅暂停恢复原回传。\n' + output);
+  console.log('选择持久化验收通过：立即勾选/取消、淡色圆弧加载、六种布局与减少动态效果、常规状态不占行高、异步加载竞态、旧快照覆盖、心跳、重开、失败保持及后台版本不一致；仅暂停恢复原回传。\n' + output);
 }
 main().catch(e => { console.error(e); console.error(output); process.exitCode = 1; }).finally(async () => {
   if (context) await context.close(); server.closeAllConnections(); server.close();

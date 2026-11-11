@@ -231,6 +231,19 @@ async function chooseTransfer(id, enabled) {
   }
   renderTasks(); await load();
 }
+function transferSpinner() {
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'transfer-spinner'); svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('fill', 'none'); svg.setAttribute('aria-hidden', 'true');
+  for (const track of [true, false]) {
+    const circle = document.createElementNS(ns, 'circle');
+    for (const [key, value] of Object.entries({ cx: 8, cy: 8, r: 5.5, stroke: 'currentColor', 'stroke-width': 1.5 })) circle.setAttribute(key, value);
+    if (track) circle.setAttribute('opacity', '.16');
+    else { circle.setAttribute('stroke-dasharray', '14 21'); circle.setAttribute('stroke-linecap', 'round'); }
+    svg.append(circle);
+  }
+  return svg;
+}
 function taskCard(t, sharedDownloadRoot = '') {
   t = BagCore.normalizeTask(t);
   t = { ...t, items: t.items.filter(i => !i.coverageExcluded), transfers: t.transfers.filter(i => !i.coverageExcluded) };
@@ -292,16 +305,22 @@ function taskCard(t, sharedDownloadRoot = '') {
       button.setAttribute('aria-busy', String(busy));
       button.title = !transfer ? '仅下载任务没有回传' : selected ? '点击暂停本任务原回传记录' : '点击继续本任务原回传记录';
       if (busy) button.title += '；正在同步服务器状态，可再次点击改变选择';
+      else if (t.transferUiError) button.title += `；选择尚未保存：${t.transferUiError}`;
+      else if (current && control?.message) button.title += `；${control.message}`;
+      if (t.status === 'stopped' && selected) button.title += '；本地调度仍已停止，执行后才追加新回传';
       const icon = h('span', 'transfer-icon'); icon.setAttribute('aria-hidden', 'true');
       icon.append(h('span', 'transfer-check', selected ? '✓' : ''));
-      if (busy) icon.append(h('span', 'transfer-spinner', '↻')); button.prepend(icon);
+      button.prepend(icon);
+      const indicator = h('span', 'transfer-indicator'); indicator.setAttribute('aria-hidden', 'true');
+      if (busy) indicator.append(transferSpinner()); button.append(indicator);
     }
     actions.append(button);
   }
   card.append(actions);
   if (transfer && t.transferControlRevision > 0) {
     const control = t.transferControl, selected = BagCore.isTransferEnabled(t), current = control?.revision === t.transferControlRevision && control?.enabled === selected;
-    const note = keyed(h('p', `transfer-control-note${t.transferUiError || current && control?.error ? ' error-text' : ''}`), 'transfer-control');
+    const error = t.transferUiError || current && control?.error;
+    const note = keyed(h(error ? 'p' : 'span', error ? 'transfer-control-note error-text' : 'sr-only transfer-status'), 'transfer-control');
     note.setAttribute('role', 'status'); note.setAttribute('aria-live', 'polite');
     note.textContent = t.transferUiError ? `回传选择尚未保存：${t.transferUiError}` : t.transferUiPending ?
       selected ? '已勾选，正在保存继续回传的选择…' : '已取消勾选，正在保存暂停回传的选择…' :
